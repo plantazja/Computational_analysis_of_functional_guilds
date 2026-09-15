@@ -1,0 +1,185 @@
+---
+title: "reapply_exist_W"
+output: html_document
+date: "2026-08-17"
+---
+
+# Prepare the W matrix to be applied to NMF dec of another new_mx matrix
+# Entails changing its shape by adding the taxa that are in the
+# new new_mx matrix but not in the W matrix
+# resulting from the first NMF
+
+```{r setup, include=FALSE}
+library(stringr)
+library(dplyr)
+```
+
+```{r}
+data_path = "../data/genera/random_split/processed/train.tsv"
+
+ES_W = "../data/GMR_NMF_dataset/5_W.tsv"
+ES_tax_inf_path = "../data/GMR_NMF_dataset/GMR_genus_level_abundance_normalised.tsv"
+```
+
+```{r}
+read_normalise_abmatrix <- function(f, readfile = TRUE) {
+    # read new data
+    if (readfile) {
+        mx = t((read.table(f, header=TRUE, row.names=1, sep="\t")))
+    } else {
+        mx = t(f)
+    }
+    print(paste0("Data loaded: ", nrow(mx), " bacteria, ", ncol(mx), " samples. "))
+    # remove unknown bact
+    mx = mx[!rownames(mx) %in% c("?", "?;?;?;?;?;?","?;?;?;?;?","?;?;?;?","?;?;?","?;?","Bins;?;?;?;?;?"),]
+    # print how many removed bact
+    print(paste0("After removing unknown bacteria: ", nrow(mx) , " bacteria, ", ncol(mx), " samples. "))
+    # remove bact that were never observed
+    mx = mx[rowSums(mx > 0) > 0,]
+    # print how many removed bact
+    print(paste0("After removing non-observed bacteria: ", nrow(mx), " bacteria, ", ncol(mx), " samples. "))
+    # remove samples that were not observed
+    mx = mx[,colSums(mx > 0) > 0]
+    # print how many removed samples
+    print(paste0("After removing unobserved samples: ", nrow(mx), " bacteria, ", ncol(mx), " samples. "))
+    # normalize by sum of all reads in a sample (i.e. column)
+    mx_norm = sweep(mx,2,colSums(mx),"/")
+    return(mx_norm)
+}
+```
+
+```{r}
+shorten_genus <- function(genus, genera_list){
+    shorten <- gsub(".*;([^\\;?]+[;\\?]*)$", "\\1", genus, perl = TRUE)
+    # print(paste("shorten ", shorten))
+    # count how many times the shorten version of the genus appears in the vector
+    if (grepl( ";", shorten, fixed = TRUE)) {
+        nb_occ <- sum(str_count(genera_list, coll(shorten)))
+    } else {
+        nb_occ <- sum(str_count(genera_list, sprintf("\\b%s\\b", shorten)))
+    } 
+    # print(paste("nbocc ", nb_occ))
+    # count how many times the shorten version of the genus appears in the shorten version of all x in the vector
+    if (grepl( ";", shorten, fixed = TRUE)) {
+        nb_occ2 <- sum(str_count(gsub(".*;([^\\;?]+[;\\?]*)$", "\\1", genera_list), coll(shorten)))
+    } else {
+        nb_occ2 <- sum(str_count(gsub(".*;([^\\;?]+[;\\?]*)$", "\\1", genera_list), sprintf("\\b%s\\b", shorten)))
+    } 
+    # print(paste("nbocc2 ", nb_occ2))
+    shorten2= ifelse(nb_occ2 > 1, gsub(".*;([a-zA-Z0-9-\\?]+;[a-zA-Z0-9-\\?]+;[a-zA-Z0-9-\\?]+)$", "\\1", genus, perl = TRUE), shorten)
+    # print(paste("shorten ", shorten))
+    return(ifelse(nb_occ == 1, shorten, ifelse(nb_occ2 ==1, gsub(".*;([a-zA-Z0-9-]+;[a-zA-Z0-9-]+)$", "\\1", genus, perl = TRUE), shorten2)))
+}
+```
+
+```{r}
+data <- read_normalise_abmatrix(data_path)
+```
+
+###########################################
+#                                         #
+#             1. Name the ES              #
+#                                         #
+###########################################
+
+```{r}
+# Read ES composition
+W <- as.matrix(read.table(ES_W, sep = '\t'))
+ES_tax_inf <- as.matrix(read.table(ES_tax_inf_path, header=TRUE, row.names=1, sep="\t"))
+rownames(W) <- rownames(ES_tax_inf)
+
+# Find dominant genus per ES
+main_genera_by_es = rownames(W)[apply(W, 2, function(x) which(x==max(x))) ] # apply function to each column ow W
+
+shortened_main_genera = c()
+for (elem in main_genera_by_es){
+    if (elem == "Bacteria;Firmicutes_A;Clostridia;Lachnospirales;Lachnospiraceae;Agathobacter"){ 
+        shortened_main_genera = c(shortened_main_genera, "Firm") #Special case
+    }else{
+        shortened_main_genera = c(shortened_main_genera, substring(
+                            gsub(".*;([^\\;?]+[;\\?]*)$", "\\1", 
+                                elem, 
+                            perl = TRUE),
+                        1, 4))
+    }
+}
+es_names = paste0("ES_", shortened_main_genera)
+
+colnames(W) <- es_names
+```
+
+#################################################
+#                                               #
+# 2. Homogeneise taxa of new matrix and ES one  #
+#                                               #
+#################################################
+
+```{r}
+base_names = sub(".*;", "", rownames(W))
+rownames(W) = base_names
+write.table(W, "../data/GMR_NMF_dataset/5_W_orig.tsv", append = FALSE, sep = "\t", row.names = TRUE, col.names = TRUE, quote = FALSE)
+```
+
+```{r}
+# Taxa in W but not in new dataset (will need to be removed or handled)
+missing_in_new_data <- rownames(W)[!rownames(W) %in% rownames(data)]
+
+# Taxa in new dataset but not in W (will need zero rows added)
+missing_in_W <- rownames(data)[!rownames(data) %in% rownames(W)]
+
+# Common taxa between both datasets
+common <- intersect(rownames(W), rownames(data))
+
+cat("Taxa in W but missing from new data:", length(missing_in_new_data), "\n",
+    "Taxa in new data but missing from W:", length(missing_in_W), "\n",
+    "Common taxa in both:", length(common), "\n")
+```
+
+```{r}
+# manual fixes   
+rownames(new_mx_norm) <- gsub("Firmicutes_I;Bacilli_A", "Firmicutes;Bacilli", rownames(new_mx_norm))
+rownames(new_mx_norm) <- gsub("Euryarchaeota", "Methanobacteriota", rownames(new_mx_norm))
+rownames(new_mx_norm) <- gsub("\\?", "", rownames(new_mx_norm))
+rownames(new_mx_norm) <- gsub("Desulfobacterota_A", "Desulfobacterota", rownames(new_mx_norm))
+rownames(new_mx_norm) <- gsub("Actinobacteria", "Actinomycetia", rownames(new_mx_norm))
+rownames(new_mx_norm) <- gsub("Lachnospirales;Dorea", "Lachnospiraceae;Dorea", rownames(new_mx_norm))
+rownames(new_mx_norm) <- gsub("Bacteria;Firmicutes_A;Clostridia;Christensenellales", "Bacteria;Firmicutes_A;Clostridia_A;Christensenellales", rownames(new_mx_norm))
+rownames(new_mx_norm) <- gsub("Bacteria;Firmicutes_I;Bacilli_A;RF39;", "Bacteria;Firmicutes_I;Bacilli;RF39;", rownames(new_mx_norm))
+rownames(new_mx_norm) <- gsub("Bacilli;Bacillales_A", "Bacilli;Bacillales;", rownames(new_mx_norm))
+rownames(new_mx_norm) <- gsub("Bacteria;Firmicutes;Bacilli;DSM-16016;Caldibacillaceae;Bacillus_J", "Bacteria;Firmicutes;Bacilli;Bacillales;Caldibacillaceae;Bacillus_J", rownames(new_mx_norm))
+rownames(new_mx_norm) <- gsub("Bacteria;Firmicutes_A;Clostridia;Tissierellales;Peptoniphilaceae", "Bacteria;Firmicutes_A;Clostridia;Tissierellales;Ezakiellaceae", rownames(new_mx_norm))
+rownames(new_mx_norm) <- gsub("Bacteria;Desulfobacterota_I;Desulfovibrionia;Desulfovibrionales", "Bacteria;Desulfobacterota;Desulfovibrionia;Desulfovibrionales", rownames(new_mx_norm))
+rownames(new_mx_norm) <- gsub("Bacteria;Firmicutes;Bacilli;Erysipelotrichales;Coprobacillaceae;", "Bacteria;Firmicutes;Bacilli;Erysipelotrichales;Erysipelatoclostridiaceae;", rownames(new_mx_norm))
+```
+
+```{r}
+# remove rows of W corresponding to taxa not seen in the new matrix
+W_filtered = W[rownames(W) %in% rownames(data),]
+
+# calculate percentage of loss by ES wrt ES total weights
+ES_loss = ((colSums(W) - colSums(W_filtered)) / colSums(W)) * 100
+
+# add to W zero-filled rows for taxa found in the new matrix but absent from W
+missing_taxa = rownames(data)[! rownames(data) %in% rownames(W)]
+new_rows = matrix(0L, nrow = length(missing_taxa), ncol = dim(W)[2])
+rownames(new_rows) <- missing_taxa
+W_filtered <- rbind(W_filtered, new_rows)
+```
+
+#################################################
+#                                               #
+# 3. Finalise and write new matrices            #
+#                                               #
+#################################################
+
+```{r}
+# order the rows of W according to the other new_mx matrix
+W_filtered <- W_filtered[match(rownames(data), rownames(W_filtered)),]
+dim(W_filtered)
+dim(data)
+all(rownames(W_filtered) == rownames(data))
+
+# write to files the W and new_mx matrices
+write.table(W_filtered, "../data/GMR_NMF_dataset/5_W_rstrain.tsv", append = FALSE, sep = "\t", row.names = TRUE, col.names = TRUE, quote = FALSE)
+write.table(data, "../data/genera/random_split/reapply/train.tsv", append = FALSE, sep = "\t", row.names = TRUE, col.names = TRUE, quote = FALSE)
+```
