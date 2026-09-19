@@ -12,7 +12,7 @@
 
 data/
 images/
-results/
+results/*
 
 # Environment
 .venv/
