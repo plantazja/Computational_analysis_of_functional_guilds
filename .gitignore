@@ -1,4 +1,6 @@
 # Output directory
+results/*
+
 !results/functions/random_split/nmf_trained/nsig_7/best_run/W_7.csv
 !results/functions/random_split/nmf_trained/nsig_7/best_run/H_test_7.csv
 !results/functions/random_split/nmf_trained/nsig_7/best_run/H_train_7.csv
@@ -12,7 +14,6 @@
 
 data/
 images/
-results/*
 
 # Environment
 .venv/
